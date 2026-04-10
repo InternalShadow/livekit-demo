@@ -13,6 +13,7 @@ type ConnectionDetails = {
 const API_KEY = process.env.LIVEKIT_API_KEY;
 const API_SECRET = process.env.LIVEKIT_API_SECRET;
 const LIVEKIT_URL = process.env.LIVEKIT_URL;
+const DEBUG_MODE = process.env.DEBUG_MODE;
 
 // don't cache the results
 export const revalidate = 0;

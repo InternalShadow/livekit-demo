@@ -1,6 +1,9 @@
 import json
 import logging
 import os
+from datetime import datetime, timezone
+from pathlib import Path
+
 from dotenv import load_dotenv
 from livekit import rtc
 from livekit.agents import (
@@ -26,6 +29,83 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 load_dotenv(".env.local")
 agent_name = os.getenv("AGENT_NAME")
 logger = logging.getLogger(f"agent-{agent_name}")
+
+DEBUG_MODE = os.getenv("DEBUG_MODE", "").lower() == "true"
+if DEBUG_MODE:
+    logger.setLevel(logging.DEBUG)
+else:
+    logger.setLevel(logging.INFO)
+
+DEBUG_LOGS_DIR = Path(__file__).parent / "debug_logs"
+
+
+def _dump_debug_log(
+    chat_ctx: llm.ChatContext,
+    *,
+    session_id: str,
+    agent_name: str,
+    mode: str = "default",
+    topic: str = "",
+    round_num: int | None = None,
+) -> None:
+    if not DEBUG_MODE:
+        return
+
+    try:
+        session_dir = DEBUG_LOGS_DIR / session_id
+        session_dir.mkdir(parents=True, exist_ok=True)
+
+        now = datetime.now(timezone.utc)
+        timestamp_str = now.strftime("%Y%m%dT%H%M%SZ")
+        filename = f"{timestamp_str}.json"
+
+        messages: list[dict] = []
+        for item in chat_ctx.items:
+            entry: dict = {"type": type(item).__name__}
+            if hasattr(item, "role"):
+                entry["role"] = str(item.role)
+            if hasattr(item, "content"):
+                content = item.content
+                if isinstance(content, list):
+                    entry["content"] = [
+                        str(c) if not isinstance(c, str) else c for c in content
+                    ]
+                else:
+                    entry["content"] = str(content) if content is not None else None
+            if hasattr(item, "name"):
+                entry["name"] = item.name
+            if hasattr(item, "call_id"):
+                entry["call_id"] = item.call_id
+            if hasattr(item, "arguments"):
+                entry["arguments"] = item.arguments
+            if hasattr(item, "output"):
+                entry["output"] = item.output
+            messages.append(entry)
+
+        payload = {
+            "session_id": session_id,
+            "mode": mode,
+            "topic": topic,
+            "timestamp": now.isoformat(),
+            "agent": agent_name,
+            "messages": messages,
+        }
+        if round_num is not None:
+            payload["round"] = round_num
+
+        (session_dir / filename).write_text(
+            json.dumps(payload, indent=2, default=str), encoding="utf-8"
+        )
+        logger.debug("Debug log written: %s/%s", session_id, filename)
+    except Exception:
+        logger.exception("Failed to write debug log")
+
+
+def _get_room_name(agent: Agent) -> str:
+    try:
+        return agent.session.room_io.room.name
+    except AttributeError:
+        return "unknown"
 
 
 class DefaultAgent(Agent):
@@ -112,6 +192,16 @@ async def _start_default_session(ctx: JobContext):
         preemptive_generation=True,
     )
 
+    @ctx.add_shutdown_callback
+    async def _on_shutdown():
+        if session.current_agent:
+            _dump_debug_log(
+                session.history,
+                session_id=ctx.room.name,
+                agent_name=type(session.current_agent).__name__,
+                mode="default",
+            )
+
     await session.start(
         agent=DefaultAgent(),
         room=ctx.room,
@@ -156,7 +246,7 @@ You are confused by modern concepts and earnestly try to relate everything to pi
 Your role as moderator:
 - Ask thought-provoking questions about the topic, filtered through your anachronistic pirate confusion
 - React with genuine bewilderment when the attendee explains modern concepts
-- Keep the conversation flowing with follow-up questions
+- Keep the conversation flowing with none-repeating follow-up questions
 - Use pirate speech naturally but keep it understandable
 - After asking your question or reacting, ALWAYS call pass_to_attendee to let the expert respond
 - NEVER ask the same question twice. If the attendee's answer echoes a previous point, react with curiosity and steer the conversation to an adjacent or deeper subtopic rather than rephrasing the same question.
@@ -185,6 +275,14 @@ Output rules:
                 ),
             )
         elif self._round_num >= MAX_PANEL_EXCHANGES:
+            _dump_debug_log(
+                self.session.history,
+                session_id=_get_room_name(self),
+                agent_name="ModeratorAgent",
+                mode="moderated",
+                topic=self._topic,
+                round_num=self._round_num,
+            )
             self.session.generate_reply(
                 instructions=(
                     "This is the final round. Thank the attendee for the fascinating "
@@ -205,11 +303,19 @@ Output rules:
     @function_tool()
     async def pass_to_attendee(self, context: RunContext):
         """Call this after you have finished asking your question, to hand the floor to the expert attendee."""
+        _dump_debug_log(
+            context.session.history,
+            session_id=_get_room_name(self),
+            agent_name="ModeratorAgent",
+            mode="moderated",
+            topic=self._topic,
+            round_num=self._round_num,
+        )
         return (
             AttendeeAgent(
                 self._topic,
                 self._round_num,
-                chat_ctx=self.chat_ctx,
+                chat_ctx=context.session.history,
                 moderator_tts=self._moderator_tts,
                 attendee_tts=self._attendee_tts,
             ),
@@ -268,11 +374,19 @@ Output rules:
     @function_tool()
     async def pass_to_moderator(self, context: RunContext):
         """Call this after you have answered the question, to hand the floor back to the moderator."""
+        _dump_debug_log(
+            context.session.history,
+            session_id=_get_room_name(self),
+            agent_name="AttendeeAgent",
+            mode="moderated",
+            topic=self._topic,
+            round_num=self._round_num,
+        )
         return (
             ModeratorAgent(
                 self._topic,
                 self._round_num + 1,
-                chat_ctx=self.chat_ctx,
+                chat_ctx=context.session.history,
                 moderator_tts=self._moderator_tts,
                 attendee_tts=self._attendee_tts,
             ),
@@ -293,13 +407,11 @@ async def _start_moderated_session(ctx: JobContext, topic: str):
     )
 
     session = AgentSession(
-        stt=inference.STT(model="deepgram/nova-3", language="en"),
         llm=inference.LLM(
             model="openai/gpt-5.3-chat-latest",
             extra_kwargs={"reasoning_effort": "low"},
         ),
         tts=moderator_tts,
-        vad=ctx.proc.userdata["vad"],
     )
 
     await session.start(
