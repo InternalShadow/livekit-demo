@@ -1,6 +1,11 @@
-# LiveKit Voice & Text AI Agent Demo
+# LiveKit Voice AI Agent Demo
 
-A full-stack demo of a real-time voice and text AI agent powered by [LiveKit Agents](https://docs.livekit.io/agents/). The Python backend handles speech-to-text (Deepgram), LLM reasoning (OpenAI), and text-to-speech (Cartesia). The Next.js frontend provides a polished UI for connecting to the agent via browser.
+A full-stack demo of real-time voice AI powered by [LiveKit Agents](https://docs.livekit.io/agents/), featuring two interaction modes:
+
+- **Call mode** — Talk directly to a voice assistant (STT via Deepgram, LLM via OpenAI, TTS via Cartesia), streamed in real time.
+- **Panel mode** — Watch two AI agents with distinct personas debate a topic using tool-based handoffs, while you observe as a silent audience member.
+
+The Python backend (`agent.py`) implements both modes in a single worker. The Next.js frontend provides a polished UI with mode selection, audio visualizers, and a live chat transcript.
 
 ## Prerequisites
 
@@ -28,6 +33,8 @@ cp demo-project/.env.example demo-project/.env.local
 ```
 
 Both files need `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET`. The `AGENT_NAME` value must match across the two files so the frontend dispatches to the correct agent.
+
+To enable debug logging (writes conversation history to `debug_logs/`), set `DEBUG_MODE=true` in the root `.env.local`.
 
 ### 3. Python agent setup
 
@@ -64,26 +71,44 @@ cd demo-project
 pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser. Clicking "Connect" generates a room token via the local API route, creates a LiveKit room, and automatically dispatches the agent into it.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ## How It Works
 
-1. The Next.js app serves a single-page UI with audio controls and a chat transcript.
-2. When a user clicks Connect, the frontend calls `POST /api/token` to mint a LiveKit access token and room configuration.
-3. The token includes an agent dispatch directive, so LiveKit automatically routes the session to the Python agent registered under `AGENT_NAME`.
-4. The agent joins the room and begins a conversational loop: it listens via STT, reasons with the LLM, and responds via TTS — all streamed in real time.
-5. Text chat messages and voice transcriptions are both displayed in the UI transcript.
+### Call mode (default)
+
+1. The user selects "Talk to Agent" and clicks **Start call**.
+2. The frontend calls `POST /api/token` with `mode: "call"`, minting a LiveKit access token whose `RoomConfiguration` dispatches to the Python agent.
+3. The agent joins the room and runs a full-duplex conversational loop: STT (Deepgram Nova 3) → LLM (OpenAI) → TTS (Cartesia Sonic 3), with Silero VAD, multilingual turn detection, and preemptive generation.
+4. Voice transcriptions and text chat messages appear in a live transcript.
+
+### Panel mode
+
+1. The user selects "Panel Discussion", optionally enters a topic, and clicks **Start panel**.
+2. The token is minted with `mode: "panel"` and the topic in agent metadata. The room is configured with `audio_input=False` and `text_input=False` so the user is an observer only.
+3. Two AI agents take turns via tool-based handoffs:
+   - **Captain Barnacles** (ModeratorAgent) — a confused pirate who interprets modern topics through an 18th-century lens.
+   - **Dr. Sarah Chen** (AttendeeAgent) — a knowledgeable expert who earnestly corrects the moderator's anachronisms.
+4. Each agent has a distinct Cartesia voice. They share a single `ChatContext` across handoffs so the conversation stays coherent. The discussion runs for a configurable number of exchanges before the moderator delivers a closing remark.
+
+### Routing
+
+A single `agent.py` worker handles both modes. The entrypoint parses `mode` from the job metadata embedded in the JWT and branches to the appropriate session setup — no separate agent processes needed.
 
 ## Project Structure
 
 ```
-├── agent.py              # Python voice agent (LiveKit Agents SDK)
+├── agent.py              # Python agent: DefaultAgent, ModeratorAgent, AttendeeAgent
 ├── requirements.txt      # Python dependencies
-├── .env.example          # Agent env template
+├── .env.example          # Agent env template (AGENT_NAME, LiveKit creds, DEBUG_MODE)
+├── debug_logs/           # JSON conversation logs (git-ignored, written when DEBUG_MODE=true)
 └── demo-project/         # Next.js frontend
-    ├── app/              # App Router pages & API routes
-    ├── components/       # UI components (shadcn/ui + agents-ui)
-    ├── hooks/            # React hooks (audio visualizers, etc.)
-    ├── lib/              # Utilities
+    ├── app/              # App Router pages & API routes (/api/token, /api/debug-logs)
+    ├── app-config.ts     # Feature flags, branding, visualizer settings
+    ├── components/       # UI components (shadcn/ui + Agents UI)
+    │   ├── app/          # App shell: app.tsx, view-controller, welcome-view
+    │   └── agents-ui/    # LiveKit Agents UI components (session, transcript, controls)
+    ├── hooks/            # React hooks (audio visualizers, debug mode, error handling)
+    ├── lib/              # Utilities (token source, config loading)
     └── .env.example      # Frontend env template
 ```
