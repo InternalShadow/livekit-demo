@@ -1,3 +1,5 @@
+export type SessionMode = 'call' | 'panel';
+
 export interface AppConfig {
   pageTitle: string;
   pageDescription: string;

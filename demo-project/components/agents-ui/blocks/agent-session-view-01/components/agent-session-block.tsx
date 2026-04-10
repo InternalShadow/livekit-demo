@@ -133,6 +133,13 @@ export interface AgentSessionView_01Props {
    * @default true
    */
   isPreConnectBufferEnabled?: boolean;
+  /**
+   * When true the user is a passive observer (e.g. panel discussion mode).
+   * The transcript is shown by default and all publish controls are hidden.
+   *
+   * @default false
+   */
+  isObserverMode?: boolean;
 
   /** Selects the visualizer style rendered in the main tile area. */
   audioVisualizerType?: 'bar' | 'wave' | 'grid' | 'radial' | 'aura';
@@ -162,6 +169,7 @@ export function AgentSessionView_01({
   supportsVideoInput = true,
   supportsScreenShare = true,
   isPreConnectBufferEnabled = true,
+  isObserverMode = false,
 
   audioVisualizerType,
   audioVisualizerColor,
@@ -178,16 +186,16 @@ export function AgentSessionView_01({
 }: React.ComponentProps<'section'> & AgentSessionView_01Props) {
   const session = useSessionContext();
   const { messages } = useSessionMessages(session);
-  const [chatOpen, setChatOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(isObserverMode);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const { state: agentState } = useAgent();
 
   const controls: AgentControlBarControls = {
     leave: true,
-    microphone: true,
-    chat: supportsChatInput,
-    camera: supportsVideoInput,
-    screenShare: supportsScreenShare,
+    microphone: !isObserverMode,
+    chat: !isObserverMode && supportsChatInput,
+    camera: !isObserverMode && supportsVideoInput,
+    screenShare: !isObserverMode && supportsScreenShare,
   };
 
   useEffect(() => {
@@ -263,10 +271,10 @@ export function AgentSessionView_01({
           <AgentControlBar
             variant="livekit"
             controls={controls}
-            isChatOpen={chatOpen}
+            isChatOpen={isObserverMode ? false : chatOpen}
             isConnected={session.isConnected}
             onDisconnect={session.end}
-            onIsChatOpenChange={setChatOpen}
+            onIsChatOpenChange={isObserverMode ? undefined : setChatOpen}
           />
           <ExportChatButton
             messages={messages}

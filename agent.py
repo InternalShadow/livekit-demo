@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from dotenv import load_dotenv
@@ -79,6 +80,22 @@ server.setup_fnc = prewarm
 
 @server.rtc_session(agent_name=agent_name)
 async def entrypoint(ctx: JobContext):
+    metadata: dict = {}
+    if ctx.job.metadata:
+        try:
+            metadata = json.loads(ctx.job.metadata)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    mode = metadata.get("mode", "default")
+
+    if mode == "moderated":
+        await _start_moderated_session(ctx, topic=metadata.get("topic", ""))
+    else:
+        await _start_default_session(ctx)
+
+
+async def _start_default_session(ctx: JobContext):
     session = AgentSession(
         stt=inference.STT(model="deepgram/nova-3", language="en"),
         llm=inference.LLM(
@@ -118,6 +135,8 @@ class ModeratorAgent(Agent):
         round_num: int = 0,
         *,
         chat_ctx: llm.ChatContext | None = None,
+        moderator_tts: inference.TTS | None = None,
+        attendee_tts: inference.TTS | None = None,
     ) -> None:
         topic_instruction = (
             f"The discussion topic is: {topic}. Interpret and discuss this topic "
@@ -140,21 +159,21 @@ Your role as moderator:
 - Keep the conversation flowing with follow-up questions
 - Use pirate speech naturally but keep it understandable
 - After asking your question or reacting, ALWAYS call pass_to_attendee to let the expert respond
+- NEVER ask the same question twice. If the attendee's answer echoes a previous point, react with curiosity and steer the conversation to an adjacent or deeper subtopic rather than rephrasing the same question.
+- Each of your questions should explore a different facet of the topic
 
 Output rules:
 - Respond in plain text only, no formatting
 - Keep your turns to two to four sentences
 - Speak conversationally as a voice, not text""",
-            tts=inference.TTS(
-                model="cartesia/sonic-3",
-                voice=MODERATOR_VOICE_ID,
-                language="en-US",
-            ),
+            tts=moderator_tts,
             chat_ctx=chat_ctx,
             allow_interruptions=False,
         )
         self._topic = topic
         self._round_num = round_num
+        self._moderator_tts = moderator_tts
+        self._attendee_tts = attendee_tts
 
     async def on_enter(self):
         if self._round_num == 0:
@@ -177,7 +196,9 @@ Output rules:
             self.session.generate_reply(
                 instructions=(
                     "React to what the attendee just said with pirate confusion, "
-                    "then ask a follow-up question. Then call pass_to_attendee."
+                    "then ask a NEW question about a different aspect of the topic. "
+                    "Do NOT revisit questions you have already asked. "
+                    "Then call pass_to_attendee."
                 ),
             )
 
@@ -185,7 +206,13 @@ Output rules:
     async def pass_to_attendee(self, context: RunContext):
         """Call this after you have finished asking your question, to hand the floor to the expert attendee."""
         return (
-            AttendeeAgent(self._topic, self._round_num, chat_ctx=context.chat_ctx),
+            AttendeeAgent(
+                self._topic,
+                self._round_num,
+                chat_ctx=self.chat_ctx,
+                moderator_tts=self._moderator_tts,
+                attendee_tts=self._attendee_tts,
+            ),
             "The expert attendee is responding.",
         )
 
@@ -197,6 +224,8 @@ class AttendeeAgent(Agent):
         round_num: int = 0,
         *,
         chat_ctx: llm.ChatContext | None = None,
+        moderator_tts: inference.TTS | None = None,
+        attendee_tts: inference.TTS | None = None,
     ) -> None:
         super().__init__(
             instructions=f"""You are Dr. Sarah Chen, a knowledgeable and straight-laced expert panelist. You are in a panel discussion moderated by Captain Barnacles, a confused pirate captain who genuinely believes he is still living in the golden age of piracy despite being in 2026.
@@ -209,27 +238,29 @@ Your role as expert panelist:
 - Provide genuinely interesting information about the topic
 - The comedy comes naturally from your serious expertise clashing with the moderator's pirate confusion
 - After making your point, ALWAYS call pass_to_moderator to let the moderator continue
+- NEVER repeat a point you have already made. Review the conversation history before responding. If the moderator circles back to something you already covered, acknowledge it briefly and pivot to a new angle, a deeper detail, or a surprising related fact.
 
 Output rules:
 - Respond in plain text only, no formatting
 - Keep your turns to two to four sentences
 - Speak conversationally as a voice, not text
-- Be informative but warm""",
-            tts=inference.TTS(
-                model="cartesia/sonic-3",
-                voice=ATTENDEE_VOICE_ID,
-                language="en-US",
-            ),
+- Be informative but warm
+- Each answer must introduce at least one idea not yet mentioned in the conversation""",
+            tts=attendee_tts,
             chat_ctx=chat_ctx,
             allow_interruptions=False,
         )
         self._topic = topic
         self._round_num = round_num
+        self._moderator_tts = moderator_tts
+        self._attendee_tts = attendee_tts
 
     async def on_enter(self):
         self.session.generate_reply(
             instructions=(
                 "Respond to the moderator's question with your expert knowledge. "
+                "Do NOT repeat any point you have already made in this conversation. "
+                "Introduce a fresh angle, deeper detail, or surprising fact. "
                 "Then call pass_to_moderator."
             ),
         )
@@ -239,15 +270,27 @@ Output rules:
         """Call this after you have answered the question, to hand the floor back to the moderator."""
         return (
             ModeratorAgent(
-                self._topic, self._round_num + 1, chat_ctx=context.chat_ctx
+                self._topic,
+                self._round_num + 1,
+                chat_ctx=self.chat_ctx,
+                moderator_tts=self._moderator_tts,
+                attendee_tts=self._attendee_tts,
             ),
             "The moderator is responding.",
         )
 
 
-@server.rtc_session(agent_name="Moderated-panel")
-async def moderated_panel(ctx: JobContext):
-    topic = ctx.job.metadata or ""
+async def _start_moderated_session(ctx: JobContext, topic: str):
+    moderator_tts = inference.TTS(
+        model="cartesia/sonic-3",
+        voice=MODERATOR_VOICE_ID,
+        language="en-US",
+    )
+    attendee_tts = inference.TTS(
+        model="cartesia/sonic-3",
+        voice=ATTENDEE_VOICE_ID,
+        language="en-US",
+    )
 
     session = AgentSession(
         stt=inference.STT(model="deepgram/nova-3", language="en"),
@@ -255,16 +298,16 @@ async def moderated_panel(ctx: JobContext):
             model="openai/gpt-5.3-chat-latest",
             extra_kwargs={"reasoning_effort": "low"},
         ),
-        tts=inference.TTS(
-            model="cartesia/sonic-3",
-            voice=MODERATOR_VOICE_ID,
-            language="en-US",
-        ),
+        tts=moderator_tts,
         vad=ctx.proc.userdata["vad"],
     )
 
     await session.start(
-        agent=ModeratorAgent(topic=topic),
+        agent=ModeratorAgent(
+            topic=topic,
+            moderator_tts=moderator_tts,
+            attendee_tts=attendee_tts,
+        ),
         room=ctx.room,
         room_options=room_io.RoomOptions(
             audio_input=False,
