@@ -6,14 +6,16 @@ import type { ReceivedMessage } from '@livekit/components-react';
 import { Button } from '@/components/ui/button';
 
 function formatTranscript(messages: ReceivedMessage[]): string {
-  const date = new Date().toLocaleDateString('en-US', {
+  const locale = typeof navigator !== 'undefined' ? navigator.language : 'en-US';
+
+  const date = new Date().toLocaleDateString(locale, {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
   });
 
   const lines = messages.map((msg) => {
-    const time = new Date(msg.timestamp).toLocaleTimeString('en-US', {
+    const time = new Date(msg.timestamp).toLocaleTimeString(locale, {
       hour: 'numeric',
       minute: '2-digit',
       second: '2-digit',

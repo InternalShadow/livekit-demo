@@ -1,4 +1,5 @@
 import logging
+import os
 from dotenv import load_dotenv
 from livekit import rtc
 from livekit.agents import (
@@ -18,9 +19,9 @@ from livekit.plugins import (
 )
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
-logger = logging.getLogger("agent-Call-agent")
-
 load_dotenv(".env.local")
+agent_name = os.getenv("AGENT_NAME")
+logger = logging.getLogger(f"agent-{agent_name}")
 
 
 class DefaultAgent(Agent):
@@ -73,7 +74,7 @@ def prewarm(proc: JobProcess):
 
 server.setup_fnc = prewarm
 
-@server.rtc_session(agent_name="Call-agent")
+@server.rtc_session(agent_name=agent_name)
 async def entrypoint(ctx: JobContext):
     session = AgentSession(
         stt=inference.STT(model="deepgram/nova-3", language="en"),
