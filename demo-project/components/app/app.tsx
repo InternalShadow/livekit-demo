@@ -35,8 +35,10 @@ export function App({ appConfig }: AppProps) {
   modeRef.current = mode;
   topicRef.current = topic;
 
+  const isSandbox = typeof process.env.NEXT_PUBLIC_CONN_DETAILS_ENDPOINT === 'string';
+
   const tokenSource = useMemo(() => {
-    if (typeof process.env.NEXT_PUBLIC_CONN_DETAILS_ENDPOINT === 'string') {
+    if (isSandbox) {
       return getSandboxTokenSource(appConfig);
     }
 
@@ -73,6 +75,7 @@ export function App({ appConfig }: AppProps) {
       <main className="grid h-svh grid-cols-1 place-content-center">
         <ViewController
           appConfig={appConfig}
+          isSandbox={isSandbox}
           mode={mode}
           topic={topic}
           onModeChange={setMode}

@@ -30,6 +30,7 @@ const VIEW_MOTION_PROPS = {
 
 interface ViewControllerProps {
   appConfig: AppConfig;
+  isSandbox: boolean;
   mode: SessionMode;
   topic: string;
   onModeChange: (mode: SessionMode) => void;
@@ -38,6 +39,7 @@ interface ViewControllerProps {
 
 export function ViewController({
   appConfig,
+  isSandbox,
   mode,
   topic,
   onModeChange,
@@ -56,6 +58,7 @@ export function ViewController({
           key="welcome"
           {...VIEW_MOTION_PROPS}
           startButtonText={isPanel ? 'Start panel' : appConfig.startButtonText}
+          isSandbox={isSandbox}
           mode={mode}
           topic={topic}
           onModeChange={onModeChange}
