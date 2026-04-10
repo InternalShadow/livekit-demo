@@ -8,11 +8,14 @@ from livekit.agents import (
     AgentSession,
     JobContext,
     JobProcess,
+    RunContext,
     TurnHandlingOptions,
     cli,
     inference,
+    llm,
     room_io,
 )
+from livekit.agents import function_tool
 from livekit.plugins import (
     noise_cancellation,
     silero,
@@ -99,6 +102,173 @@ async def entrypoint(ctx: JobContext):
             audio_input=room_io.AudioInputOptions(
                 noise_cancellation=lambda params: noise_cancellation.BVCTelephony() if params.participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP else noise_cancellation.BVC(),
             ),
+        ),
+    )
+
+
+MODERATOR_VOICE_ID = "c961b81c-a935-4c17-bfb3-ba2239de8c2f"
+ATTENDEE_VOICE_ID = "f786b574-daa5-4673-aa0c-cbe3e8534c02"
+MAX_PANEL_EXCHANGES = 6
+
+
+class ModeratorAgent(Agent):
+    def __init__(
+        self,
+        topic: str,
+        round_num: int = 0,
+        *,
+        chat_ctx: llm.ChatContext | None = None,
+    ) -> None:
+        topic_instruction = (
+            f"The discussion topic is: {topic}. Interpret and discuss this topic "
+            "through your confused pirate worldview."
+        ) if topic else (
+            "No topic was given. Come up with an interesting modern topic to discuss, "
+            "but interpret it through your confused pirate worldview."
+        )
+
+        super().__init__(
+            instructions=f"""You are Captain Barnacles, the moderator of a panel discussion. You genuinely believe you are a pirate captain living in the golden age of piracy around 1720, but you are actually in the year 2026. You have no idea this is the case.
+
+You are confused by modern concepts and earnestly try to relate everything to piracy, sailing, treasure, and the high seas. When modern things come up, you interpret them through your 18th-century pirate lens in ways that are sincerely wrong and amusing.
+
+{topic_instruction}
+
+Your role as moderator:
+- Ask thought-provoking questions about the topic, filtered through your anachronistic pirate confusion
+- React with genuine bewilderment when the attendee explains modern concepts
+- Keep the conversation flowing with follow-up questions
+- Use pirate speech naturally but keep it understandable
+- After asking your question or reacting, ALWAYS call pass_to_attendee to let the expert respond
+
+Output rules:
+- Respond in plain text only, no formatting
+- Keep your turns to two to four sentences
+- Speak conversationally as a voice, not text""",
+            tts=inference.TTS(
+                model="cartesia/sonic-3",
+                voice=MODERATOR_VOICE_ID,
+                language="en-US",
+            ),
+            chat_ctx=chat_ctx,
+            allow_interruptions=False,
+        )
+        self._topic = topic
+        self._round_num = round_num
+
+    async def on_enter(self):
+        if self._round_num == 0:
+            self.session.generate_reply(
+                instructions=(
+                    "Introduce yourself as Captain Barnacles. Set up the topic with "
+                    "pirate-themed confusion and ask your first question to the expert "
+                    "attendee. Then call pass_to_attendee."
+                ),
+            )
+        elif self._round_num >= MAX_PANEL_EXCHANGES:
+            self.session.generate_reply(
+                instructions=(
+                    "This is the final round. Thank the attendee for the fascinating "
+                    "discussion with a hearty pirate farewell. Do NOT call pass_to_attendee."
+                ),
+                tool_choice="none",
+            )
+        else:
+            self.session.generate_reply(
+                instructions=(
+                    "React to what the attendee just said with pirate confusion, "
+                    "then ask a follow-up question. Then call pass_to_attendee."
+                ),
+            )
+
+    @function_tool()
+    async def pass_to_attendee(self, context: RunContext):
+        """Call this after you have finished asking your question, to hand the floor to the expert attendee."""
+        return (
+            AttendeeAgent(self._topic, self._round_num, chat_ctx=context.chat_ctx),
+            "The expert attendee is responding.",
+        )
+
+
+class AttendeeAgent(Agent):
+    def __init__(
+        self,
+        topic: str,
+        round_num: int = 0,
+        *,
+        chat_ctx: llm.ChatContext | None = None,
+    ) -> None:
+        super().__init__(
+            instructions=f"""You are Dr. Sarah Chen, a knowledgeable and straight-laced expert panelist. You are in a panel discussion moderated by Captain Barnacles, a confused pirate captain who genuinely believes he is still living in the golden age of piracy despite being in 2026.
+
+The discussion topic is: {topic or "whatever the moderator brings up"}
+
+Your role as expert panelist:
+- Answer the moderator's questions earnestly and informatively, even when they are filtered through a pirate lens
+- Gently and politely correct the moderator's anachronistic assumptions
+- Provide genuinely interesting information about the topic
+- The comedy comes naturally from your serious expertise clashing with the moderator's pirate confusion
+- After making your point, ALWAYS call pass_to_moderator to let the moderator continue
+
+Output rules:
+- Respond in plain text only, no formatting
+- Keep your turns to two to four sentences
+- Speak conversationally as a voice, not text
+- Be informative but warm""",
+            tts=inference.TTS(
+                model="cartesia/sonic-3",
+                voice=ATTENDEE_VOICE_ID,
+                language="en-US",
+            ),
+            chat_ctx=chat_ctx,
+            allow_interruptions=False,
+        )
+        self._topic = topic
+        self._round_num = round_num
+
+    async def on_enter(self):
+        self.session.generate_reply(
+            instructions=(
+                "Respond to the moderator's question with your expert knowledge. "
+                "Then call pass_to_moderator."
+            ),
+        )
+
+    @function_tool()
+    async def pass_to_moderator(self, context: RunContext):
+        """Call this after you have answered the question, to hand the floor back to the moderator."""
+        return (
+            ModeratorAgent(
+                self._topic, self._round_num + 1, chat_ctx=context.chat_ctx
+            ),
+            "The moderator is responding.",
+        )
+
+
+@server.rtc_session(agent_name="Moderated-panel")
+async def moderated_panel(ctx: JobContext):
+    topic = ctx.job.metadata or ""
+
+    session = AgentSession(
+        stt=inference.STT(model="deepgram/nova-3", language="en"),
+        llm=inference.LLM(
+            model="openai/gpt-5.3-chat-latest",
+            extra_kwargs={"reasoning_effort": "low"},
+        ),
+        tts=inference.TTS(
+            model="cartesia/sonic-3",
+            voice=MODERATOR_VOICE_ID,
+            language="en-US",
+        ),
+        vad=ctx.proc.userdata["vad"],
+    )
+
+    await session.start(
+        agent=ModeratorAgent(topic=topic),
+        room=ctx.room,
+        room_options=room_io.RoomOptions(
+            audio_input=False,
+            text_input=False,
         ),
     )
 
