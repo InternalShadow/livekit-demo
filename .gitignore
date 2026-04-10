@@ -9,3 +9,5 @@ dist/
 build/
 .mypy_cache/
 .ruff_cache/
+debug_logs/
+chat-transcript*.txt

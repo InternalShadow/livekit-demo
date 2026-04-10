@@ -1,8 +1,13 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, type MotionProps, motion } from 'motion/react';
-import { useAgent, useSessionContext, useSessionMessages } from '@livekit/components-react';
+import {
+  useAgent,
+  useRoomContext,
+  useSessionContext,
+  useSessionMessages,
+} from '@livekit/components-react';
 import { AgentChatTranscript } from '@/components/agents-ui/agent-chat-transcript';
 import {
   AgentControlBar,
@@ -185,10 +190,13 @@ export function AgentSessionView_01({
   ...props
 }: React.ComponentProps<'section'> & AgentSessionView_01Props) {
   const session = useSessionContext();
+  const room = useRoomContext();
   const { messages } = useSessionMessages(session);
   const [chatOpen, setChatOpen] = useState(isObserverMode);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const { state: agentState } = useAgent();
+  const wasConnectedRef = useRef(false);
+  const debugLogSentRef = useRef(false);
 
   const controls: AgentControlBarControls = {
     leave: true,
@@ -206,6 +214,37 @@ export function AgentSessionView_01({
       scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
     }
   }, [messages]);
+
+  const sendDebugLog = useCallback(
+    (msgs: typeof messages) => {
+      fetch('/api/debug-logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomName: room.name,
+          messages: msgs.map((m) => ({
+            id: m.id,
+            content: m.message,
+            timestamp: m.timestamp,
+            from: m.from
+              ? { identity: m.from.identity, name: m.from.name, isLocal: m.from.isLocal }
+              : undefined,
+          })),
+        }),
+      }).catch(() => {});
+    },
+    [room.name]
+  );
+
+  useEffect(() => {
+    if (session.isConnected) {
+      wasConnectedRef.current = true;
+      debugLogSentRef.current = false;
+    } else if (wasConnectedRef.current && !debugLogSentRef.current && messages.length > 0) {
+      debugLogSentRef.current = true;
+      sendDebugLog(messages);
+    }
+  }, [session.isConnected, messages, sendDebugLog]);
 
   return (
     <section
