@@ -11,3 +11,4 @@ build/
 .ruff_cache/
 debug_logs/
 chat-transcript*.txt
+ARCHITECTURE.md
