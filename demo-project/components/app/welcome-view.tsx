@@ -1,4 +1,7 @@
+import { AnimatePresence, motion } from 'motion/react';
+import type { SessionMode } from '@/app-config';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/shadcn/utils';
 
 function WelcomeImage() {
   return (
@@ -20,11 +23,21 @@ function WelcomeImage() {
 
 interface WelcomeViewProps {
   startButtonText: string;
+  isSandbox: boolean;
+  mode: SessionMode;
+  topic: string;
+  onModeChange: (mode: SessionMode) => void;
+  onTopicChange: (topic: string) => void;
   onStartCall: () => void;
 }
 
 export const WelcomeView = ({
   startButtonText,
+  isSandbox,
+  mode,
+  topic,
+  onModeChange,
+  onTopicChange,
   onStartCall,
   ref,
 }: React.ComponentProps<'div'> & WelcomeViewProps) => {
@@ -34,8 +47,66 @@ export const WelcomeView = ({
         <WelcomeImage />
 
         <p className="text-foreground max-w-prose pt-1 leading-6 font-medium">
-          Chat live with your voice AI agent
+          {mode === 'panel'
+            ? 'Watch two AI agents debate a topic'
+            : 'Chat live with your voice AI agent'}
         </p>
+
+        {!isSandbox && (
+          <>
+            {/* Mode selector */}
+            <div className="bg-muted border-input mt-6 flex gap-1 rounded-full border p-1">
+              <button
+                type="button"
+                aria-pressed={mode === 'call'}
+                onClick={() => onModeChange('call')}
+                className={cn(
+                  'rounded-full px-4 py-2 font-mono text-xs font-bold tracking-wider uppercase transition-colors',
+                  mode === 'call'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                Talk to Agent
+              </button>
+              <button
+                type="button"
+                aria-pressed={mode === 'panel'}
+                onClick={() => onModeChange('panel')}
+                className={cn(
+                  'rounded-full px-4 py-2 font-mono text-xs font-bold tracking-wider uppercase transition-colors',
+                  mode === 'panel'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                Panel Discussion
+              </button>
+            </div>
+
+            {/* Topic input (panel mode only) */}
+            <AnimatePresence>
+              {mode === 'panel' && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2, ease: 'easeOut' }}
+                  className="w-64 overflow-hidden"
+                >
+                  <input
+                    type="text"
+                    value={topic}
+                    onChange={(e) => onTopicChange(e.target.value)}
+                    aria-label="Discussion topic (optional)"
+                    placeholder="Discussion topic (optional)"
+                    className="border-input bg-background text-foreground placeholder:text-muted-foreground focus:ring-ring mt-4 w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2"
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
+        )}
 
         <Button
           size="lg"

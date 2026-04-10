@@ -3,7 +3,7 @@
 import { useTheme } from 'next-themes';
 import { AnimatePresence, motion } from 'motion/react';
 import { useSessionContext } from '@livekit/components-react';
-import type { AppConfig } from '@/app-config';
+import type { AppConfig, SessionMode } from '@/app-config';
 import { AgentSessionView_01 } from '@/components/agents-ui/blocks/agent-session-view-01';
 import { WelcomeView } from '@/components/app/welcome-view';
 
@@ -30,11 +30,25 @@ const VIEW_MOTION_PROPS = {
 
 interface ViewControllerProps {
   appConfig: AppConfig;
+  isSandbox: boolean;
+  mode: SessionMode;
+  topic: string;
+  onModeChange: (mode: SessionMode) => void;
+  onTopicChange: (topic: string) => void;
 }
 
-export function ViewController({ appConfig }: ViewControllerProps) {
+export function ViewController({
+  appConfig,
+  isSandbox,
+  mode,
+  topic,
+  onModeChange,
+  onTopicChange,
+}: ViewControllerProps) {
   const { isConnected, start } = useSessionContext();
   const { resolvedTheme } = useTheme();
+
+  const isPanel = mode === 'panel';
 
   return (
     <AnimatePresence mode="wait">
@@ -43,7 +57,12 @@ export function ViewController({ appConfig }: ViewControllerProps) {
         <MotionWelcomeView
           key="welcome"
           {...VIEW_MOTION_PROPS}
-          startButtonText={appConfig.startButtonText}
+          startButtonText={isPanel ? 'Start panel' : appConfig.startButtonText}
+          isSandbox={isSandbox}
+          mode={mode}
+          topic={topic}
+          onModeChange={onModeChange}
+          onTopicChange={onTopicChange}
           onStartCall={start}
         />
       )}
@@ -52,10 +71,16 @@ export function ViewController({ appConfig }: ViewControllerProps) {
         <MotionSessionView
           key="session-view"
           {...VIEW_MOTION_PROPS}
-          supportsChatInput={appConfig.supportsChatInput}
-          supportsVideoInput={appConfig.supportsVideoInput}
-          supportsScreenShare={appConfig.supportsScreenShare}
+          isObserverMode={isPanel}
+          supportsChatInput={isPanel ? false : appConfig.supportsChatInput}
+          supportsVideoInput={isPanel ? false : appConfig.supportsVideoInput}
+          supportsScreenShare={isPanel ? false : appConfig.supportsScreenShare}
           isPreConnectBufferEnabled={appConfig.isPreConnectBufferEnabled}
+          preConnectMessage={
+            isPanel
+              ? 'Waiting for the panel discussion to begin\u2026'
+              : 'Agent is listening, ask it a question'
+          }
           audioVisualizerType={appConfig.audioVisualizerType}
           audioVisualizerColor={
             resolvedTheme === 'dark'

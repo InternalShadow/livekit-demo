@@ -1,10 +1,10 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { TokenSource } from 'livekit-client';
 import { useSession } from '@livekit/components-react';
 import { WarningIcon } from '@phosphor-icons/react/dist/ssr';
-import type { AppConfig } from '@/app-config';
+import type { AppConfig, SessionMode } from '@/app-config';
 import { AgentSessionProvider } from '@/components/agents-ui/agent-session-provider';
 import { StartAudioButton } from '@/components/agents-ui/start-audio-button';
 import { ViewController } from '@/components/app/view-controller';
@@ -27,10 +27,41 @@ interface AppProps {
 }
 
 export function App({ appConfig }: AppProps) {
+  const [mode, setMode] = useState<SessionMode>('call');
+  const [topic, setTopic] = useState('');
+
+  const modeRef = useRef(mode);
+  const topicRef = useRef(topic);
+  modeRef.current = mode;
+  topicRef.current = topic;
+
+  const isSandbox = typeof process.env.NEXT_PUBLIC_CONN_DETAILS_ENDPOINT === 'string';
+
   const tokenSource = useMemo(() => {
-    return typeof process.env.NEXT_PUBLIC_CONN_DETAILS_ENDPOINT === 'string'
-      ? getSandboxTokenSource(appConfig)
-      : TokenSource.endpoint('/api/token');
+    if (isSandbox) {
+      return getSandboxTokenSource(appConfig);
+    }
+
+    return TokenSource.custom(async () => {
+      const currentMode = modeRef.current;
+      const body: Record<string, unknown> = { mode: currentMode };
+
+      if (currentMode === 'panel') {
+        body.topic = topicRef.current;
+      }
+
+      const res = await fetch('/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Token request failed: ${res.status}`);
+      }
+
+      return await res.json();
+    });
   }, [appConfig]);
 
   const session = useSession(
@@ -42,7 +73,14 @@ export function App({ appConfig }: AppProps) {
     <AgentSessionProvider session={session}>
       <AppSetup />
       <main className="grid h-svh grid-cols-1 place-content-center">
-        <ViewController appConfig={appConfig} />
+        <ViewController
+          appConfig={appConfig}
+          isSandbox={isSandbox}
+          mode={mode}
+          topic={topic}
+          onModeChange={setMode}
+          onTopicChange={setTopic}
+        />
       </main>
       <StartAudioButton label="Start Audio" />
       <Toaster

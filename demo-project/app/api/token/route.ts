@@ -35,13 +35,22 @@ export async function POST(req: Request) {
       throw new Error('LIVEKIT_API_SECRET is not defined');
     }
 
-    // Parse room config from request body.
     const body = await req.json();
-    // Recreate the RoomConfiguration object from JSON object.
-    const roomConfig = RoomConfiguration.fromJson(body?.room_config, { ignoreUnknownFields: true });
+    const mode: string = body?.mode ?? 'call';
+    const topic: string = body?.topic ?? '';
+    const agentName = process.env.AGENT_NAME ?? 'Call-agent';
 
-    // Generate participant token
-    const participantName = 'user';
+    const agentMetadata =
+      mode === 'panel'
+        ? JSON.stringify({ mode: 'moderated', topic })
+        : JSON.stringify({ mode: 'default' });
+
+    const roomConfig = RoomConfiguration.fromJson(
+      { agents: [{ agent_name: agentName, metadata: agentMetadata }] },
+      { ignoreUnknownFields: true }
+    );
+
+    const participantName = mode === 'panel' ? 'observer' : 'user';
     const participantIdentity = `voice_assistant_user_${Math.floor(Math.random() * 10_000)}`;
     const roomName = `voice_assistant_room_${Math.floor(Math.random() * 10_000)}`;
 
@@ -51,7 +60,6 @@ export async function POST(req: Request) {
       roomConfig
     );
 
-    // Return connection details
     const data: ConnectionDetails = {
       serverUrl: LIVEKIT_URL,
       roomName,

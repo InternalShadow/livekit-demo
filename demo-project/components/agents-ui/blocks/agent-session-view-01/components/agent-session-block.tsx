@@ -1,8 +1,13 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, type MotionProps, motion } from 'motion/react';
-import { useAgent, useSessionContext, useSessionMessages } from '@livekit/components-react';
+import {
+  useAgent,
+  useRoomContext,
+  useSessionContext,
+  useSessionMessages,
+} from '@livekit/components-react';
 import { AgentChatTranscript } from '@/components/agents-ui/agent-chat-transcript';
 import {
   AgentControlBar,
@@ -133,6 +138,13 @@ export interface AgentSessionView_01Props {
    * @default true
    */
   isPreConnectBufferEnabled?: boolean;
+  /**
+   * When true the user is a passive observer (e.g. panel discussion mode).
+   * The transcript is shown by default and all publish controls are hidden.
+   *
+   * @default false
+   */
+  isObserverMode?: boolean;
 
   /** Selects the visualizer style rendered in the main tile area. */
   audioVisualizerType?: 'bar' | 'wave' | 'grid' | 'radial' | 'aura';
@@ -162,6 +174,7 @@ export function AgentSessionView_01({
   supportsVideoInput = true,
   supportsScreenShare = true,
   isPreConnectBufferEnabled = true,
+  isObserverMode = false,
 
   audioVisualizerType,
   audioVisualizerColor,
@@ -177,17 +190,20 @@ export function AgentSessionView_01({
   ...props
 }: React.ComponentProps<'section'> & AgentSessionView_01Props) {
   const session = useSessionContext();
+  const room = useRoomContext();
   const { messages } = useSessionMessages(session);
-  const [chatOpen, setChatOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(isObserverMode);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const { state: agentState } = useAgent();
+  const wasConnectedRef = useRef(false);
+  const debugLogSentRef = useRef(false);
 
   const controls: AgentControlBarControls = {
     leave: true,
-    microphone: true,
-    chat: supportsChatInput,
-    camera: supportsVideoInput,
-    screenShare: supportsScreenShare,
+    microphone: !isObserverMode,
+    chat: !isObserverMode && supportsChatInput,
+    camera: !isObserverMode && supportsVideoInput,
+    screenShare: !isObserverMode && supportsScreenShare,
   };
 
   useEffect(() => {
@@ -198,6 +214,37 @@ export function AgentSessionView_01({
       scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
     }
   }, [messages]);
+
+  const sendDebugLog = useCallback(
+    (msgs: typeof messages) => {
+      fetch('/api/debug-logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomName: room.name,
+          messages: msgs.map((m) => ({
+            id: m.id,
+            content: m.message,
+            timestamp: m.timestamp,
+            from: m.from
+              ? { identity: m.from.identity, name: m.from.name, isLocal: m.from.isLocal }
+              : undefined,
+          })),
+        }),
+      }).catch(() => {});
+    },
+    [room.name]
+  );
+
+  useEffect(() => {
+    if (session.isConnected) {
+      wasConnectedRef.current = true;
+      debugLogSentRef.current = false;
+    } else if (wasConnectedRef.current && !debugLogSentRef.current && messages.length > 0) {
+      debugLogSentRef.current = true;
+      sendDebugLog(messages);
+    }
+  }, [session.isConnected, messages, sendDebugLog]);
 
   return (
     <section
@@ -263,10 +310,10 @@ export function AgentSessionView_01({
           <AgentControlBar
             variant="livekit"
             controls={controls}
-            isChatOpen={chatOpen}
+            isChatOpen={isObserverMode ? false : chatOpen}
             isConnected={session.isConnected}
             onDisconnect={session.end}
-            onIsChatOpenChange={setChatOpen}
+            onIsChatOpenChange={isObserverMode ? undefined : setChatOpen}
           />
           <ExportChatButton
             messages={messages}
