@@ -169,8 +169,8 @@ async def entrypoint(ctx: JobContext):
 
     mode = metadata.get("mode", "default")
 
-    if mode == "moderated":
-        await _start_moderated_session(ctx, topic=metadata.get("topic", ""))
+    if mode == "panel":
+        await _start_panel_session(ctx, topic=metadata.get("topic", ""))
     else:
         await _start_default_session(ctx)
 
@@ -279,7 +279,7 @@ Output rules:
                 self.session.history,
                 session_id=_get_room_name(self),
                 agent_name="ModeratorAgent",
-                mode="moderated",
+                mode="panel",
                 topic=self._topic,
                 round_num=self._round_num,
             )
@@ -307,7 +307,7 @@ Output rules:
             context.session.history,
             session_id=_get_room_name(self),
             agent_name="ModeratorAgent",
-            mode="moderated",
+            mode="panel",
             topic=self._topic,
             round_num=self._round_num,
         )
@@ -378,7 +378,7 @@ Output rules:
             context.session.history,
             session_id=_get_room_name(self),
             agent_name="AttendeeAgent",
-            mode="moderated",
+            mode="panel",
             topic=self._topic,
             round_num=self._round_num,
         )
@@ -394,7 +394,7 @@ Output rules:
         )
 
 
-async def _start_moderated_session(ctx: JobContext, topic: str):
+async def _start_panel_session(ctx: JobContext, topic: str):
     moderator_tts = inference.TTS(
         model="cartesia/sonic-3",
         voice=MODERATOR_VOICE_ID,
