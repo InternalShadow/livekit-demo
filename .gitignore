@@ -12,3 +12,4 @@ build/
 debug_logs/
 chat-transcript*.txt
 ARCHITECTURE.md
+*ghost*.md

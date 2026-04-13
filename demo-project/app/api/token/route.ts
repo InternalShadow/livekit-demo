@@ -42,7 +42,7 @@ export async function POST(req: Request) {
 
     const agentMetadata =
       mode === 'panel'
-        ? JSON.stringify({ mode: 'moderated', topic })
+        ? JSON.stringify({ mode: 'panel', topic })
         : JSON.stringify({ mode: 'default' });
 
     const roomConfig = RoomConfiguration.fromJson(
